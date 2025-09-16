@@ -1,0 +1,10 @@
+# Ignore virtual environment
+mfa_env/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore other unnecessary system files
+.DS_Store
+.env
