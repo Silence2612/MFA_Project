@@ -6,12 +6,15 @@ from keras_facenet import FaceNet
 # Initialize FaceNet
 embedder = FaceNet()
 
-# Load saved embeddings from .npy
+# Load OpenCV's face detector
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+# Load saved embeddings
 saved_faces = np.load("face_embeddings.npy", allow_pickle=True)
 
 def recognize_face(image_path, threshold=0.8):
     """
-    Compares input image embedding with saved embeddings
+    Detects face, extracts embedding, compares with saved embeddings,
     and returns the closest match name (if below threshold).
     """
     # Load image
@@ -19,10 +22,23 @@ def recognize_face(image_path, threshold=0.8):
     if image is None:
         raise FileNotFoundError(f"Image not found: {image_path}")
 
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # Convert to RGB
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-    # Generate embedding for input image
-    input_embedding = embedder.embeddings([image])[0]
+    # Detect face(s)
+    faces = face_cascade.detectMultiScale(rgb_image, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100))
+
+    if len(faces) == 0:
+        print("🚫 No face detected.")
+        return "Unknown"
+
+    # Use the first detected face
+    (x, y, w, h) = faces[0]
+    face_crop = rgb_image[y:y+h, x:x+w]
+    face_crop = cv2.resize(face_crop, (160, 160))  # FaceNet expects 160×160
+
+    # Generate embedding for cropped face
+    input_embedding = embedder.embeddings([face_crop])[0]
 
     best_match_name = "Unknown"
     best_distance = float('inf')
@@ -45,7 +61,7 @@ def recognize_face(image_path, threshold=0.8):
         return best_match_name
 
 
-# Example usage
-test_image = os.path.join(os.path.dirname(__file__), "faces", "test.jpg")
+# --- Example usage ---
+test_image = os.path.join(os.path.dirname(__file__), "faces", "fufu.jpg")
 result = recognize_face(test_image)
 print("🧾 Recognized as:", result)
