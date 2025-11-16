@@ -1,59 +1,17 @@
+# driver.py
 import cv2
-import numpy as np
-import faiss
-from keras_facenet import FaceNet
-
-# Initialize FaceNet and face detector
-embedder = FaceNet()
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# Load saved embeddings
-saved_faces = np.load("face_embeddings.npy", allow_pickle=True)
-embeddings = np.array([p["embedding"] for p in saved_faces]).astype('float32')
-names = [p["name"] for p in saved_faces]
-
-# Build FAISS index
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(embeddings)
-
-def recognize_face_frame(frame, threshold=0.8):
-    """Detect faces, compute embeddings, and return recognized names."""
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    faces = face_cascade.detectMultiScale(rgb_frame, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100))
-
-    recognized_names = []
-    for (x, y, w, h) in faces:
-        face_crop = rgb_frame[y:y+h, x:x+w]
-        face_crop = cv2.resize(face_crop, (160, 160))
-
-        embedding = embedder.embeddings([face_crop])[0].astype('float32')
-        D, I = index.search(np.expand_dims(embedding, axis=0), k=1)
-
-        best_distance = D[0][0]
-        best_match = names[I[0][0]]
-        name = best_match if best_distance < threshold else "Unknown"
-
-        recognized_names.append(name)
-
-        color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
-        cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-        cv2.putText(frame, name, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-        print(f"Detected: {name} (distance: {best_distance:.4f})")
-
-    return frame, recognized_names
-
+from face_compare import compare_face
+from gesture_compare_live import compare_gesture  # <-- live gesture version
 
 def recognize_from_webcam(frame_skip=5):
-    print("🚀 Starting webcam initialization...")
     cap = cv2.VideoCapture(0)
+
     if not cap.isOpened():
-        print("❌ Cannot access webcam.")
+        print("❌ Webcam not found")
         return
-    print("🎥 Webcam accessed successfully.")
 
     frame_count = 0
-    print("🎥 Starting webcam... Press 'q' to quit.")
+    print("🎥 Webcam started... Press 'q' to exit.")
 
     while True:
         ret, frame = cap.read()
@@ -61,11 +19,40 @@ def recognize_from_webcam(frame_skip=5):
             break
 
         if frame_count % frame_skip == 0:
-            frame, recognized = recognize_face_frame(frame)
-            if recognized:
-                print(f"Frame {frame_count}: {recognized}")
 
-        cv2.imshow("FAISS Face Recognition - Webcam", frame)
+            # ---------------------------
+            # FACE RECOGNITION
+            # ---------------------------
+            face_results = compare_face(frame)
+
+            for res in face_results:
+                x, y, w, h = res["box"]
+                name = res["name"]
+                dist = res["distance"]
+
+                color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                cv2.putText(frame, f"{name}",
+                            (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8, (255, 255, 255), 2)
+
+                print(f"[FACE] {name} (dist={dist:.4f})")
+
+            # ---------------------------
+            # GESTURE RECOGNITION
+            # ---------------------------
+            gesture_result = compare_gesture(frame)  # returns a label or "Unknown"
+
+            if gesture_result is not None:
+                cv2.putText(frame, f"Gesture: {gesture_result}",
+                            (10, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                            1.0, (0, 255, 255), 2)
+
+                print(f"[GESTURE] {gesture_result}")
+
+
+        cv2.imshow("Face + Gesture Recognition", frame)
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -75,5 +62,4 @@ def recognize_from_webcam(frame_skip=5):
     cv2.destroyAllWindows()
 
 
-# --- Run Webcam Recognition ---
-recognize_from_webcam(frame_skip=5)
+recognize_from_webcam()
