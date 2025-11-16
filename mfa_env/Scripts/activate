@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="C:\Users\vansh\Desktop\MFA_Project\mfa_env"
+VIRTUAL_ENV="C:\Users\vansh\Desktop\Codes\MFA_Project\mfa_env"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
