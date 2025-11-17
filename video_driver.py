@@ -1,7 +1,7 @@
 # driver.py
 import cv2
-from face_compare import compare_face
-from gesture_compare_live import compare_gesture  # <-- live gesture version
+from Face import face_compare
+from Gesture import gesture_compare  # <-- live gesture version
 
 def recognize_from_webcam(frame_skip=5):
     cap = cv2.VideoCapture(0)
