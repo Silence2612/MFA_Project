@@ -5,7 +5,8 @@ import pickle
 import os
 import sys
 
-GESTURE_FOLDER = "gestures"
+BASE = os.path.dirname(os.path.abspath(__file__))
+GESTURE_FOLDER = os.path.join(BASE, "gestures")
 OUTPUT_FILE = "gesture_embeddings.pkl"
 
 mp_hands = mp.solutions.hands
