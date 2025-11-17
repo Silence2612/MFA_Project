@@ -1,7 +1,7 @@
-# driver.py
 import cv2
-from Face import face_compare
-from Gesture import gesture_compare  # <-- live gesture version
+from Face.face_compare import compare_face
+from Gesture.gesture_compare import compare_gesture
+
 
 def recognize_from_webcam(frame_skip=5):
     cap = cv2.VideoCapture(0)
@@ -41,7 +41,7 @@ def recognize_from_webcam(frame_skip=5):
             # ---------------------------
             # GESTURE RECOGNITION
             # ---------------------------
-            gesture_result = compare_gesture(frame)  # returns a label or "Unknown"
+            gesture_result = compare_gesture(frame)
 
             if gesture_result is not None:
                 cv2.putText(frame, f"Gesture: {gesture_result}",
@@ -49,7 +49,6 @@ def recognize_from_webcam(frame_skip=5):
                             1.0, (0, 255, 255), 2)
 
                 print(f"[GESTURE] {gesture_result}")
-
 
         cv2.imshow("Face + Gesture Recognition", frame)
 
@@ -60,6 +59,5 @@ def recognize_from_webcam(frame_skip=5):
 
     cap.release()
     cv2.destroyAllWindows()
-
 
 recognize_from_webcam()
