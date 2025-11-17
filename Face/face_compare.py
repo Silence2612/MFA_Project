@@ -22,7 +22,7 @@ index = faiss.IndexFlatL2(embeddings.shape[1])
 index.add(embeddings)
 
 
-def compare_face(frame, threshold=0.9):
+def compare_face(frame, threshold=2.5):
     """
     Input: full frame (BGR)
     Output: list of {name, distance, box}
