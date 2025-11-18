@@ -1,55 +1,35 @@
-import sounddevice as sd
-import numpy as np
-import faiss
-import tensorflow as tf
-import pickle
 import os
+import numpy as np
+import sounddevice as sd
+import scipy.io.wavfile as wav
+import python_speech_features as psf
+from scipy.spatial.distance import cosine
 
-yamnet_model = tf.lite.Interpreter(model_path="Models/yamnet.tflite")
-yamnet_model.allocate_tensors()
-input_details = yamnet_model.get_input_details()
-output_details = yamnet_model.get_output_details()
+VOICE_DB = "VoiceDB"
 
-SAVE_EMB = "VA/voice_embeddings.index"
-SAVE_META = "VA/voice_labels.pkl"
+def extract_voice_embedding_from_audio(audio):
+    mfcc = psf.mfcc(audio, 16000, numcep=13, nfilt=26)
+    return np.mean(mfcc, axis=0)
 
-
-def extract_embedding(audio):
-    audio = audio.astype(np.float32)
-    yamnet_model.set_tensor(input_details[0]['index'], audio)
-    yamnet_model.invoke()
-    embeddings = yamnet_model.get_tensor(output_details[0]['index'])
-    return np.mean(embeddings, axis=0)
-
-
-def record_audio(duration=3, sr=16000):
-    print(f"🎙 Speak for 3 seconds...")
-    audio = sd.rec(int(duration * sr), samplerate=sr, channels=1, dtype='float32')
+def compare_voice(duration=2, threshold=0.25):
+    print("\n🎤 Listening for verification...")
+    audio = sd.rec(int(duration * 16000), samplerate=16000, channels=1)
     sd.wait()
-    return audio.flatten()
 
+    audio = audio.reshape(-1)
+    emb_live = extract_voice_embedding_from_audio(audio)
 
-def compare_voice(thresh=1.10):
-    if not os.path.exists(SAVE_EMB):
-        return None, 999, False
+    best_user = "Unknown"
+    best_score = 999
 
-    index = faiss.read_index(SAVE_EMB)
-    with open(SAVE_META, "rb") as f:
-        labels = pickle.load(f)
+    for f in os.listdir(VOICE_DB):
+        if f.endswith(".npy"):
+            user = f[:-4]
+            stored_emb = np.load(os.path.join(VOICE_DB, f))
 
-    audio = record_audio()
-    emb = extract_embedding(audio).reshape(1, -1)
+            dist = cosine(emb_live, stored_emb)
+            if dist < best_score:
+                best_score = dist
+                best_user = user
 
-    D, I = index.search(emb, 1)
-    dist = float(D[0][0])
-    idx = int(I[0][0])
-    user_id = labels[idx]
-
-    if dist < thresh:
-        return user_id, dist, True
-    return None, dist, False
-
-
-if __name__ == "__main__":
-    uid, d, ok = compare_voice()
-    print("Result:", uid, d, ok)
+    return best_user, best_score
