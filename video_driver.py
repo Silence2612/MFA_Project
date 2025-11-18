@@ -1,131 +1,227 @@
 import cv2
 import os
+import numpy as np
+import sounddevice as sd
 
-from Face.face_compare import compare_face
 from Face.face_register import register_face
+from Face.face_compare import compare_face
 
-from Gesture.gesture_compare import compare_gesture
 from Gesture.gesture_register import register_gesture
+from Gesture.gesture_compare import compare_gesture
 
 from Voice.voice_register import enroll_voice
 from Voice.voice_compare import compare_voice
 
-# ---------------------
-# Helper
-# ---------------------
 
-def check_and_confirm(path, username, feature_name):
-    """Check if a sample exists and ask user if they want to add another."""
-    if os.path.exists(path):
-        ans = input(f"\n⚠ {feature_name} for '{username}' already exists. Add another sample? (y/n): ").strip().lower()
-        return ans == "y"
-    return True  # No sample exists → OK to enroll
+FACE_DB = "FaceDB"
+GESTURE_DB = "GestureDB"
+VOICE_DB = "VoiceDB"
 
 
-# ---------------------
-# Main Driver
-# ---------------------
+def ensure_db():
+    os.makedirs(FACE_DB, exist_ok=True)
+    os.makedirs(GESTURE_DB, exist_ok=True)
+    os.makedirs(VOICE_DB, exist_ok=True)
 
-def video_driver(frame_skip=5):
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("❌ Webcam not found")
-        return
+def ask_overwrite(label):
+    """Ask if user wants to overwrite or extend."""
+    print(f"\n⚠️  Data for '{label}' already exists.")
+    print("Choose:")
+    print("1 - Overwrite")
+    print("2 - Cancel")
+    ch = input("Enter choice: ").strip()
+    return ch == "1"
 
-    print("\n🎥 Webcam started...")
-    print("Keys:")
-    print("  F = Enroll Face")
-    print("  G = Enroll Gesture")
-    print("  V = Enroll Voice")
-    print("  U = Enroll FULL MFA (Face + Gesture + Voice)")
-    print("  q = Quit\n")
 
-    frame_count = 0
-
+# -----------------------------
+# ENROLLMENT MENU
+# -----------------------------
+def enroll_user(username):
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        print(f"""
+======================================
+🔵 ENROLLMENT MODE — USER: {username}
+======================================
+Controls:
+  F - Enroll Face
+  G - Enroll Gesture
+  V - Enroll Voice
+  Q - Back to Main Menu
+  ESC - Exit Program
+""")
 
-        # --------------------------
-        # RECOGNITION (same as old)
-        # --------------------------
-        if frame_count % frame_skip == 0:
+        key = input("Select (F/G/V/Q/ESC): ").strip().upper()
 
+        if key == "Q":
+            return  # return to main menu
+
+        if key == "ESC":
+            print("👋 Exiting program...")
+            exit()
+
+        # FACE ENROLL
+        if key == "F":
+            path = os.path.join(FACE_DB, f"{username}.npy")
+            if os.path.exists(path):
+                if not ask_overwrite(username):
+                    continue
+
+            print("[ENROLL] FACE")
+            success = register_face(username)
+            print("Face enroll result:", success)
+
+        # GESTURE ENROLL
+        elif key == "G":
+            path = os.path.join(GESTURE_DB, f"{username}.pkl")
+            if os.path.exists(path):
+                if not ask_overwrite(username):
+                    continue
+
+            print("[ENROLL] GESTURE")
+            ok = register_gesture(username)
+            print("Gesture enroll result:", ok)
+
+        # VOICE ENROLL
+        elif key == "V":
+            path = os.path.join(VOICE_DB, f"{username}.npy")
+            if os.path.exists(path):
+                if not ask_overwrite(username):
+                    continue
+
+            print("[ENROLL] VOICE")
+            enroll_voice(username)
+            print("Voice enroll complete.")
+
+        else:
+            print("❌ Invalid option! Use F/G/V/Q/ESC.")
+
+
+# -----------------------------
+# VERIFICATION MENU
+# -----------------------------
+def verify_menu(username):
+    while True:
+        print(f"""
+======================================
+🟣 VERIFICATION — USER: {username}
+======================================
+Choose what you want to verify:
+  F - Verify Face
+  G - Verify Gesture
+  V - Verify Voice
+  A - Verify ALL (Face + Gesture + Voice)
+  Q - Back to Main Menu
+  ESC - Exit Program
+""")
+
+        key = input("Select (F/G/V/A/Q/ESC): ").strip().upper()
+
+        if key == "Q":
+            return  # back to main menu
+
+        if key == "ESC":
+            print("👋 Exiting program...")
+            exit()
+
+        # Use camera only for F / G / A
+        if key in ["F", "G", "A"]:
+            cap = cv2.VideoCapture(0)
+            print("🎥 Show your face/gesture to camera...")
+            ret, frame = cap.read()
+            cap.release()
+
+            if not ret:
+                print("❌ Camera error.")
+                continue
+
+        # FACE ONLY
+        if key == "F":
+            face_label, face_dist = compare_face(frame)
+            print(f"[DEBUG] Face: {face_label}  dist={face_dist}")
+            print("Match:", face_label == username)
+
+        # GESTURE ONLY
+        elif key == "G":
+            gesture_label, gesture_dist = compare_gesture(frame)
+            print(f"[DEBUG] Gesture: {gesture_label}  dist={gesture_dist}")
+            print("Match:", gesture_label == username)
+
+        # VOICE ONLY
+        elif key == "V":
+            print("\n🎤 Speak for 2s...")
+            voice_label, voice_dist = compare_voice(duration=2)
+            print(f"[DEBUG] Voice: {voice_label} dist={voice_dist}")
+            print("Match:", voice_label == username)
+
+        # ENTIRE MFA
+        elif key == "A":
             # FACE
-            face_results = compare_face(frame)
-            for res in face_results:
-                x, y, w, h = res["box"]
-                name = res["name"]
-                color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
-
-                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(frame, name, (x, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            face_label, face_dist = compare_face(frame)
+            print(f"[DEBUG] Face: {face_label} dist={face_dist}")
 
             # GESTURE
-            gesture_res = compare_gesture(frame)
-            if gesture_res:
-                cv2.putText(frame, f"Gesture: {gesture_res}", (10, 40),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-
-        cv2.imshow("MFA Recognition", frame)
-
-        key = cv2.waitKey(1) & 0xFF
-
-        # --------------------------
-        # ENROLLMENT LOGIC
-        # --------------------------
-
-        if key in [ord('f'), ord('F')]:
-            username = input("\nEnter username for FACE enrollment: ").strip()
-            path = f"FaceDB/{username}.npy"
-
-            if check_and_confirm(path, username, "Face"):
-                register_face(username, frame)
-                print("✅ Face enrolled.\n")
-
-        elif key in [ord('g'), ord('G')]:
-            username = input("\nEnter username for GESTURE enrollment: ").strip()
-            path = f"GestureDB/{username}.png"
-
-            if check_and_confirm(path, username, "Gesture"):
-                register_gesture(username, frame)
-                print("✅ Gesture enrolled.\n")
-
-        elif key in [ord('v'), ord('V')]:
-            username = input("\nEnter username for VOICE enrollment: ").strip()
-            path = f"VoiceDB/{username}.npy"
-
-            if check_and_confirm(path, username, "Voice"):
-                enroll_voice(username)
-                print("✅ Voice enrolled.\n")
-
-        elif key in [ord('u'), ord('U')]:
-            username = input("\nEnter username for FULL MFA: ").strip()
-
-            # FACE
-            fpath = f"FaceDB/{username}.npy"
-            if check_and_confirm(fpath, username, "Face"):
-                register_face(username, frame)
-
-            # GESTURE
-            gpath = f"GestureDB/{username}.png"
-            if check_and_confirm(gpath, username, "Gesture"):
-                register_gesture(username, frame)
+            gesture_label, gesture_dist = compare_gesture(frame)
+            print(f"[DEBUG] Gesture: {gesture_label} dist={gesture_dist}")
 
             # VOICE
-            vpath = f"VoiceDB/{username}.npy"
-            if check_and_confirm(vpath, username, "Voice"):
-                enroll_voice(username)
+            print("\n🎤 Speak for 2s...")
+            voice_label, voice_dist = compare_voice(duration=2)
+            print(f"[DEBUG] Voice: {voice_label} dist={voice_dist}")
 
-            print("🔥 FULL MFA enrollment complete.\n")
+            ok_face = (face_label == username)
+            ok_gesture = (gesture_label == username)
+            ok_voice = (voice_label == username)
 
-        elif key == ord('q'):
+            print("\n==========================")
+            print("🔎 RESULTS")
+            print("==========================")
+            print("Face Match:   ", ok_face)
+            print("Gesture Match:", ok_gesture)
+            print("Voice Match:  ", ok_voice)
+
+            if ok_face and ok_gesture and ok_voice:
+                print("\n✅ FULL VERIFICATION SUCCESS\n")
+            else:
+                print("\n❌ VERIFICATION FAILED\n")
+
+        else:
+            print("❌ Invalid option!")
+
+
+# -----------------------------
+# MAIN MENU LOOP
+# -----------------------------
+def video_driver():
+    ensure_db()
+
+    while True:
+        print("""
+===========================
+  Multi-Factor System
+===========================
+1 - Enroll User
+2 - Verify User
+ESC - Quit Program
+""")
+
+        mode = input("Select (1/2/ESC): ").strip().upper()
+
+        if mode == "ESC":
+            print("👋 Exiting program...")
             break
 
-        frame_count += 1
+        if mode == "1":
+            username = input("Enter username to enroll: ").strip()
+            enroll_user(username)
 
-    cap.release()
-    cv2.destroyAllWindows()
+        elif mode == "2":
+            username = input("Enter username to verify: ").strip()
+            verify_menu(username)
+
+        else:
+            print("❌ Invalid choice! Use 1/2/ESC.")
+
+
+if __name__ == "__main__":
+    video_driver()

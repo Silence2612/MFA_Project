@@ -1,83 +1,94 @@
-# gesture_register.py
+# Gesture/gesture_register.py
 import os
 import cv2
+import pickle
 import numpy as np
 import mediapipe as mp
-import pickle
 
-# Init MediaPipe
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GESTURE_DB = os.path.join(BASE, "GestureDB")
+os.makedirs(GESTURE_DB, exist_ok=True)
+
+GESTURE_DB_FILE = os.path.join(GESTURE_DB, "gesture_embeddings.pkl")
+
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=True, max_num_hands=1)
 
-def crop_hand(frame, hand_landmarks):
-    """Crop hand bounding box from frame with padding."""
-    h, w, _ = frame.shape
-    x = [int(lm.x * w) for lm in hand_landmarks.landmark]
-    y = [int(lm.y * h) for lm in hand_landmarks.landmark]
-    x_min, x_max = max(min(x) - 10, 0), min(max(x) + 10, w)
-    y_min, y_max = max(min(y) - 10, 0), min(max(y) + 10, h)
-    return frame[y_min:y_max, x_min:x_max]
 
-def get_detailed_embedding(hand_landmarks):
-    """Return detailed embedding: landmarks + distances + angles."""
+def _extract_features(hand_landmarks):
     pts = np.array([[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark])
-    pts -= pts[0]  # translate wrist to origin
-    scale = np.linalg.norm(pts[12])
-    if scale > 1e-6:
-        pts /= scale
+    pts -= pts[0]
+    scale = np.linalg.norm(pts[12]) + 1e-8
+    pts /= scale
 
-    # Pairwise distances
-    dists = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=-1)
-    dists_flat = dists[np.triu_indices(pts.shape[0], k=1)]
+    d = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=-1)
+    d_flat = d[np.triu_indices(21, k=1)]
 
-    # Finger angles
-    def angle(a, b, c):
+    def ang(a, b, c):
         ba = a - b
         bc = c - b
-        cos_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
-        return np.arccos(np.clip(cos_angle, -1.0, 1.0))
-    
-    finger_joints = [
-        (0,1,2), (1,2,3), (2,3,4),
-        (0,5,6), (5,6,7), (6,7,8),
+        cos = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-8)
+        return np.arccos(np.clip(cos, -1.0, 1.0))
+
+    joints = [
+        (0,1,2),(1,2,3),(2,3,4),
+        (0,5,6),(5,6,7),(6,7,8),
         (0,9,10),(9,10,11),(10,11,12),
         (0,13,14),(13,14,15),(14,15,16),
         (0,17,18),(17,18,19),(18,19,20)
     ]
-    angles = [angle(pts[a], pts[b], pts[c]) for a,b,c in finger_joints]
 
-    return np.concatenate([pts.flatten(), dists_flat, angles])
+    angles = np.array([ang(pts[a], pts[b], pts[c]) for (a, b, c) in joints])
 
-def register_gestures(folder_path="gestures", save_file="gesture_embeddings.pkl"):
-    gesture_db = {}
-    if not os.path.exists(folder_path):
-        print(f"❌ Folder '{folder_path}' does not exist.")
-        return gesture_db
+    return np.concatenate([pts.flatten(), d_flat, angles])
 
-    files = [f for f in os.listdir(folder_path) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
 
-    for file in files:
-        img_path = os.path.join(folder_path, file)
-        img = cv2.imread(img_path)
-        if img is None:
-            print(f"⚠️ Cannot read {file}")
-            continue
+def register_gesture(username):
+    """Capture hand gesture and save embedding under username."""
+    cam = cv2.VideoCapture(0)
+    print("[GESTURE REGISTER] Show gesture. Press SPACE to capture, ESC to cancel.")
 
-        result = hands.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        if not result.multi_hand_landmarks:
-            print(f"❌ No hand detected in {file}")
-            continue
+    while True:
+        ret, frame = cam.read()
+        if not ret:
+            print("❌ Camera error!")
+            cam.release()
+            return False
 
-        embedding = get_detailed_embedding(result.multi_hand_landmarks[0])
-        label = os.path.splitext(file)[0]
-        gesture_db[label] = embedding
-        print(f"✅ Registered gesture: {label}")
+        cv2.imshow("Gesture Register", frame)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = hands.process(rgb)
 
-    # Save embeddings
-    with open(save_file, "wb") as f:
-        pickle.dump(gesture_db, f)
-    print(f"💾 Saved {len(gesture_db)} gestures to {save_file}")
+        key = cv2.waitKey(1) & 0xFF
 
-    return gesture_db
+        # CANCEL
+        if key == 27:  # ESC
+            print("❌ Cancelled.")
+            cam.release()
+            cv2.destroyAllWindows()
+            return False
 
-__all__ = ["get_detailed_embedding", "register_gestures"]
+        # CAPTURE
+        if key == 32:  # SPACE
+            if not res.multi_hand_landmarks:
+                print("❌ No hand detected, try again.")
+                continue
+
+            emb = _extract_features(res.multi_hand_landmarks[0])
+
+            # Load old DB
+            if os.path.exists(GESTURE_DB_FILE):
+                with open(GESTURE_DB_FILE, "rb") as f:
+                    db = pickle.load(f)
+            else:
+                db = {}
+
+            db[username] = emb
+
+            with open(GESTURE_DB_FILE, "wb") as f:
+                pickle.dump(db, f)
+
+            print(f"✅ Gesture saved for {username}")
+            cam.release()
+            cv2.destroyAllWindows()
+            return True

@@ -1,59 +1,74 @@
-# face_compare.py
-import cv2
+# Face/face_compare.py
+import os
 import numpy as np
-import faiss
+import cv2
 import torch
-from facenet_pytorch import InceptionResnetV1
+import faiss
+from facenet_pytorch import MTCNN, InceptionResnetV1
 
-# Load FaceNet (pretrained on VGGFace2)
-embedder = InceptionResnetV1(pretrained='vggface2').eval()
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FACE_DB = os.path.join(BASE, "FaceDB")
+os.makedirs(FACE_DB, exist_ok=True)
 
-# Haar Cascade
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades +
-                                     'haarcascade_frontalface_default.xml')
-
-# Load saved embeddings
-saved_faces = np.load("face_embeddings.npy", allow_pickle=True)
-embeddings = np.array([p["embedding"] for p in saved_faces]).astype("float32")
-names = [p["name"] for p in saved_faces]
-
-# Build FAISS index
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(embeddings)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+mtcnn = MTCNN(keep_all=False, device=device)
+resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
 
-def compare_face(frame, threshold=2.5):
-    """
-    Input: full frame (BGR)
-    Output: list of {name, distance, box}
-    """
-    results = []
+def _face_emb_from_frame(frame):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    face = mtcnn(rgb)
+    if face is None:
+        return None
+    with torch.no_grad():
+        face = face.to(device).unsqueeze(0)
+        emb = resnet(face).cpu().numpy()[0].astype('float32')
+    return emb
 
-    # Detect faces
-    faces = face_cascade.detectMultiScale(rgb, 1.1, 5, minSize=(120, 120))
 
-    for (x, y, w, h) in faces:
-        crop = rgb[y:y+h, x:x+w]
-        crop = cv2.resize(crop, (160, 160))
+def _load_db():
+    names, embs = [], []
+    for f in os.listdir(FACE_DB):
+        if f.lower().endswith(".npy"):
+            name = os.path.splitext(f)[0]
+            path = os.path.join(FACE_DB, f)
+            emb = np.load(path).astype('float32')
+            names.append(name)
+            embs.append(emb)
+    if embs:
+        embs = np.stack(embs, axis=0)
+    else:
+        embs = np.zeros((0, 512), dtype='float32')
+    return names, embs
 
-        # Preprocess for facenet-pytorch
-        tensor = torch.from_numpy(crop).float() / 255.0
-        tensor = tensor.permute(2, 0, 1).unsqueeze(0)  # (1,3,160,160)
 
-        with torch.no_grad():
-            emb = embedder(tensor).numpy()[0].astype("float32")
+# build index on import
+NAMES, EMBS = _load_db()
+if EMBS.shape[0] > 0:
+    index = faiss.IndexFlatL2(EMBS.shape[1])
+    index.add(EMBS)
+else:
+    index = None
 
-        # FAISS search
-        D, I = index.search(emb.reshape(1, -1), 1)
 
-        dist = D[0][0]
-        name = names[I[0][0]] if dist < threshold else "Unknown"
+def compare_face(frame, threshold=1.0):
+    """
+    Input: OpenCV frame (BGR).
+    Output: (label, distance)
+    """
+    emb = _face_emb_from_frame(frame)
+    if emb is None:
+        return None, 9999  # always return 2 values
 
-        results.append({
-            "name": name,
-            "distance": float(dist),
-            "box": (x, y, w, h)
-        })
+    if index is None or index.ntotal == 0:
+        return None, 9999
 
-    return results
+    D, I = index.search(emb.reshape(1, -1), k=1)
+    dist = float(D[0][0])
+
+    if dist < threshold:
+        label = NAMES[I[0][0]]
+    else:
+        label = "Unknown"
+
+    return label, dist
