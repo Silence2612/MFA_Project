@@ -50,25 +50,32 @@ if EMBS.shape[0] > 0:
 else:
     index = None
 
+def compare_face(frame, threshold=0.4):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-def compare_face(frame, threshold=1.0):
-    """
-    Input: OpenCV frame (BGR).
-    Output: (label, distance)
-    """
-    emb = _face_emb_from_frame(frame)
-    if emb is None:
-        return None, 9999  # always return 2 values
+    # Better detection
+    face, prob = mtcnn(rgb, return_prob=True)
+    if face is None or prob < 0.90:
+        return "Unknown", 9999
 
-    if index is None or index.ntotal == 0:
-        return None, 9999
+    with torch.no_grad():
+        face = face.to(device).unsqueeze(0)
+        emb = resnet(face).cpu().numpy()[0].astype('float32')
 
+    # normalize embedding for cosine similarity
+    emb = emb / (np.linalg.norm(emb) + 1e-9)
+
+    if index is None:
+        return "Unknown", 9999
+
+    # cosine similarity (higher = better)
     D, I = index.search(emb.reshape(1, -1), k=1)
-    dist = float(D[0][0])
+    sim = float(D[0][0])  # similarity score
 
-    if dist < threshold:
+    if sim > threshold:
         label = NAMES[I[0][0]]
     else:
         label = "Unknown"
 
-    return label, dist
+    return label, sim
+
